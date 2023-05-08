@@ -1,14 +1,12 @@
 import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.net.URL;
-import java.security.SecureRandom;
-import java.util.Collections;
-import java.util.Iterator;
-import java.util.List;
+import java.util.*;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -26,8 +24,9 @@ import java.util.stream.IntStream;
 public final class ShoppingListIterator {
     public static void main(final String[] args) throws ExecutionException, InterruptedException {
         final var mainShoppingListTask = MainShoppingList.loadShoppingListAsync();
-        final var vasyaShoppingListTask = UserShoppingList.generateShoppingListAsync();
-        final var kolyaShoppingListTask = UserShoppingList.generateShoppingListAsync();
+        final var vasyaShoppingListTask = UserShoppingList.generateShoppingListAsync("https://raw.githubusercontent.com/UralmashFox/assignment_5/main/customer_1.txt");
+        final var kolyaShoppingListTask = UserShoppingList.generateShoppingListAsync("https://raw.githubusercontent.com/UralmashFox/assignment_5/main/customer_2.txt");
+        final var mishaShoppingListTask = UserShoppingList.generateShoppingListAsync("https://raw.githubusercontent.com/UralmashFox/assignment_5/main/customer_3.txt");
 
         final var mainShoppingList = mainShoppingListTask.get();
 
@@ -50,12 +49,19 @@ public final class ShoppingListIterator {
         kolyaShoppingList.log();
         System.out.println();
 
+        final var mishaShoppingList = mishaShoppingListTask.get();
+
+        System.out.println("Misha's Shopping List");
+        System.out.println("---------------------");
+        kolyaShoppingList.log();
+        System.out.println();
+
         vasyaShoppingList.forEach(vasyaProduct ->
             mainShoppingList.tryDecrease(vasyaProduct.title(), vasyaProduct.quantity())
         );
 
         System.out.println();
-        System.out.println("Main Shopping List after Kolya's purchase");
+        System.out.println("Main Shopping List after Vasya's purchase");
         System.out.println("-----------------------------------------");
         mainShoppingList.log();
         System.out.println();
@@ -65,7 +71,17 @@ public final class ShoppingListIterator {
         );
 
         System.out.println();
-        System.out.println("Main Shopping List after Vasya's purchase");
+        System.out.println("Main Shopping List after Kolya's purchase");
+        System.out.println("-----------------------------------------");
+        mainShoppingList.log();
+        System.out.println();
+
+        mishaShoppingList.forEach(mishaProduct ->
+                mainShoppingList.tryDecrease(mishaProduct.title(), mishaProduct.quantity())
+        );
+
+        System.out.println();
+        System.out.println("Main Shopping List after Misha's purchase");
         System.out.println("-----------------------------------------");
         mainShoppingList.log();
     }
@@ -93,8 +109,6 @@ record Product(@NotNull String title, int quantity) {
 /** Product list that allows iteration */
 
 abstract class AbstractShoppingList implements Iterable<Product> {
-    @NotNull
-    protected static final String FILE_URL = "https://raw.githubusercontent.com/UralmashFox/assignment_5/main/shop.txt";
 
     /** Thread pool for product list's initialization */
 
@@ -102,11 +116,75 @@ abstract class AbstractShoppingList implements Iterable<Product> {
     protected static final ExecutorService initExecutor = Executors.newVirtualThreadPerTaskExecutor();
 
     @NotNull
+    protected final String fileUrl;
+
+    @NotNull
     protected List<Product> products;
+
+    protected AbstractShoppingList(final @NotNull String fileUrl) {
+        this.fileUrl = fileUrl;
+
+        try (final var reader = new BufferedReader(new InputStreamReader(new URL(fileUrl).openStream()))) {
+            products = reader.lines()
+                    .filter(s -> !s.isEmpty())
+                    .map(Product::parseProduct)
+                    .collect(Collectors.toList());
+        } catch (final IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    protected final class Iter implements ListIterator<Product> {
+
+        private int cursor;
+
+        Iter(final int initialCursor) { cursor = initialCursor; }
+
+        @Override
+        public boolean hasNext() { return cursor < products.size(); }
+
+        @Override
+        public boolean hasPrevious() { return cursor > 0; }
+
+        @Override
+        @NotNull
+        public Product next() {
+            if (!hasNext())
+                throw new NoSuchElementException();
+            return products.get(cursor++);
+        }
+
+        @Override
+        @NotNull
+        public Product previous() {
+            if (!hasPrevious())
+                throw new NoSuchElementException();
+            return products.get(cursor--);
+        }
+
+        @Override
+        public int nextIndex() { return cursor; }
+
+        @Override
+        public int previousIndex() { return cursor - 1; }
+
+        @Override
+        public void remove() { throw new UnsupportedOperationException(); }
+
+        @Override
+        public void set(final @Nullable Product product) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void add(final @Nullable Product product) {
+            throw new UnsupportedOperationException();
+        }
+    }
 
     @NotNull
     @Override
-    public final Iterator<Product> iterator() { return products.iterator(); }
+    public final Iterator<Product> iterator() { return new Iter(0); }
 
     public final void log() { products.forEach(System.out::println); }
 }
@@ -118,14 +196,7 @@ final class MainShoppingList extends AbstractShoppingList {
     /** Reads and parses file synchronously */
 
     private MainShoppingList() {
-        try (final var reader = new BufferedReader(new InputStreamReader(new URL(FILE_URL).openStream()))) {
-            products = reader.lines()
-                    .filter(s -> !s.isEmpty())
-                    .map(Product::parseProduct)
-                    .collect(Collectors.toList());
-        } catch (final IOException e) {
-            e.printStackTrace();
-        }
+        super("https://raw.githubusercontent.com/UralmashFox/assignment_5/main/shop.txt");
     }
 
     /** Reads and parses file synchronously */
@@ -163,7 +234,12 @@ final class MainShoppingList extends AbstractShoppingList {
             return;
         }
 
-        products.set(productInd, new Product(productTitle, productQuantity - amount));
+        final var newQuantity = productQuantity - amount;
+
+        if (newQuantity == 0)
+            products.remove(productInd);
+        else
+            products.set(productInd, new Product(productTitle, productQuantity - amount));
     }
 }
 
@@ -176,22 +252,7 @@ final class UserShoppingList extends AbstractShoppingList {
      * shuffles all items and removes some of them
      */
 
-    private UserShoppingList() {
-        try (final var reader = new BufferedReader(new InputStreamReader(new URL(FILE_URL).openStream()))) {
-            final var random = new SecureRandom();
-
-            final var allProducts = reader.lines()
-                    .filter(s -> !s.isEmpty())
-                    .map(s -> s.split(", ")[0])
-                    .map(s -> new Product(s, random.nextInt(10)))
-                    .collect(Collectors.toList());
-
-            Collections.shuffle(allProducts);
-            products = allProducts.subList(0, random.nextInt(1, allProducts.size()));
-        } catch (final IOException e) {
-            e.printStackTrace();
-        }
-    }
+    private UserShoppingList(final @NotNull String fileUrl) { super(fileUrl); }
 
     /**
      * Reads and parses file synchronously,
@@ -199,7 +260,9 @@ final class UserShoppingList extends AbstractShoppingList {
      */
 
     @NotNull
-    public static UserShoppingList generateShoppingListSync() { return new UserShoppingList(); }
+    public static UserShoppingList createShoppingListSync(final @NotNull String fileUrl) {
+        return new UserShoppingList(fileUrl);
+    }
 
     /**
      * Reads and parses file asynchronously,
@@ -207,7 +270,7 @@ final class UserShoppingList extends AbstractShoppingList {
      */
 
     @NotNull
-    public static synchronized Future<UserShoppingList> generateShoppingListAsync() {
-        return initExecutor.submit(UserShoppingList::generateShoppingListSync);
+    public static synchronized Future<UserShoppingList> generateShoppingListAsync(final @NotNull String fileUrl) {
+        return initExecutor.submit(() -> createShoppingListSync(fileUrl));
     }
 }
